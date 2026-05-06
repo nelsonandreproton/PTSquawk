@@ -189,6 +189,25 @@
       display: flex; align-items: center; justify-content: center;
       filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));
     }
+
+    /* ── History panel ── */
+    .side-panel { max-height: calc(100% - 32px); }
+    .history-header {
+      padding: 12px 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+      font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+      color: var(--text-muted); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+    }
+    .history-body { overflow-y: auto; max-height: 220px; flex-shrink: 0; }
+    .history-body::-webkit-scrollbar { width: 4px; }
+    .history-body::-webkit-scrollbar-track { background: transparent; }
+    .history-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .history-card { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    .history-card:last-child { border-bottom: none; }
+    .history-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
+    .history-callsign { font-weight: 700; font-size: 13px; letter-spacing: 0.5px; }
+    .history-meta { font-size: 11px; color: var(--text-muted); }
+    .history-time { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+    .history-empty { padding: 24px 14px; text-align: center; color: var(--text-muted); font-size: 12px; }
   </style>
 </head>
 <body>
@@ -227,6 +246,13 @@
         <p>Sem emergências detectadas.<br>A monitorizar…</p>
       </div>
     </div>
+    <div class="history-header">
+      <span>Histórico</span>
+      <span id="historyCount" style="color:var(--text-primary);font-size:13px;">0</span>
+    </div>
+    <div class="history-body" id="historyList">
+      <div class="history-empty">Sem eventos registados.</div>
+    </div>
   </div>
 
   <div class="legend-panel">
@@ -259,6 +285,7 @@
 // ── CONFIG ──────────────────────────────────────
 const REFRESH_INTERVAL    = 30_000;
 const EMERGENCY_SQUAWKS   = ['7700', '7600', '7500'];
+const HISTORY_URL         = 'https://89-167-52-126.sslip.io/ptsquawk/history';
 const ICAO24_RE           = /^[0-9a-f]{6}$/i;
 
 const SQUAWK_META = {
@@ -631,6 +658,7 @@ async function _doRefresh() {
     renderPanel(emergency);
     setCounter(emergency.length);
     setStatus('live');
+    fetchHistory();
   } catch (err) {
     setStatus('error');
     console.error('OpenSky fetch error:', err);
@@ -677,8 +705,60 @@ document.getElementById('btnAll').addEventListener('click', function() {
   refresh().then(() => startTicker());
 });
 
+// ── HISTORY ──────────────────────────────────────
+const SQUAWK_EMOJI = { '7700': '🆘', '7600': '📻', '7500': '⚠️' };
+
+function renderHistory(events) {
+  const list    = document.getElementById('historyList');
+  const countEl = document.getElementById('historyCount');
+  countEl.textContent = events.length;
+
+  if (events.length === 0) {
+    list.innerHTML = '<div class="history-empty">Sem eventos registados.</div>';
+    return;
+  }
+
+  list.innerHTML = events.map(ev => {
+    const sq       = escapeHtml(ev.squawk   || '----');
+    const cls      = escapeHtml(SQUAWK_META[ev.squawk]?.cls || '');
+    const emoji    = SQUAWK_EMOJI[ev.squawk] || '✈️';
+    const call     = escapeHtml(ev.callsign || ev.icao24 || '-');
+    const reg      = escapeHtml(ev.registration || '-');
+    const model    = escapeHtml(ev.model    || '-');
+    const orig     = escapeHtml(ev.orig     || '-');
+    const dest     = escapeHtml(ev.dest     || '-');
+    const altFt    = ev.alt_ft != null ? `${ev.alt_ft.toLocaleString()} ft` : '-';
+    const speed    = ev.speed_kt != null ? `${ev.speed_kt} kt` : '-';
+    const ts       = ev.timestamp
+      ? new Date(ev.timestamp).toLocaleString('pt-PT', { timeZone: 'UTC', hour12: false }).replace(',', '')
+      : '-';
+
+    return `<div class="history-card">
+      <div class="history-card-top">
+        <span class="history-callsign">${emoji} ${call}</span>
+        <span class="squawk-chip ${cls}">${sq}</span>
+      </div>
+      <div class="history-meta">${reg} · ${model}</div>
+      <div class="history-meta">${orig} → ${dest} · ${altFt} · ${speed}</div>
+      <div class="history-time">${ts} UTC</div>
+    </div>`;
+  }).join('');
+}
+
+async function fetchHistory() {
+  try {
+    const r = await fetch(HISTORY_URL);
+    if (!r.ok) return;
+    const data = await r.json();
+    renderHistory(data.events || []);
+  } catch {
+    // History is non-critical — silently degrade
+  }
+}
+
 // ── BOOT ─────────────────────────────────────────
 refresh().then(() => startTicker());
+fetchHistory();
 </script>
 </body>
 </html>
