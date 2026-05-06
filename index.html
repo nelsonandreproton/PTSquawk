@@ -258,7 +258,6 @@
 <script>
 // ── CONFIG ──────────────────────────────────────
 const REFRESH_INTERVAL    = 30_000;
-const FLIGHT_LOOKBACK_SEC = 2 * 60 * 60;
 const EMERGENCY_SQUAWKS   = ['7700', '7600', '7500'];
 const ICAO24_RE           = /^[0-9a-f]{6}$/i;
 
@@ -268,10 +267,11 @@ const SQUAWK_META = {
   '7500': { label: 'Interferência ilícita', color: '#e3b341', icon: '⚠️', cls: 'sq-7500' },
 };
 
-const BOUNDS = [
-  { lamin: 36.8, lomin: -9.6,  lamax: 42.2, lomax: -6.0  },
-  { lamin: 36.5, lomin: -31.5, lamax: 40.0, lomax: -24.5 },
-  { lamin: 30.0, lomin: -17.5, lamax: 33.5, lomax: -15.5 },
+// airplanes.live point/radius endpoints (radius in nautical miles)
+const REGIONS = [
+  { label: 'Portugal continental', lat: 39.5, lon: -8.0,  radius: 250 },
+  { label: 'Açores',               lat: 38.5, lon: -28.0, radius: 250 },
+  { label: 'Madeira',              lat: 32.7, lon: -17.0, radius: 150 },
 ];
 
 const PT_OUTLINE  = [[42.15,-9.3],[41.85,-8.81],[41.5,-8.5],[40.0,-8.65],[38.7,-9.5],[37.0,-9.0],[36.98,-7.4],[37.2,-7.0],[38.0,-7.0],[39.5,-7.05],[41.8,-6.3],[42.15,-6.8],[42.15,-9.3]];
@@ -412,13 +412,17 @@ async function enrichFromHexdb(icao) {
 }
 
 async function enrichFlights(icao) {
+  // Route enrichment via airplanes.live hex lookup — also returns origin/destination when available
   try {
-    const now   = Math.floor(Date.now() / 1000);
-    const begin = now - FLIGHT_LOOKBACK_SEC;
-    const r = await fetch(`https://opensky-network.org/api/flights/aircraft?icao24=${icao.toLowerCase()}&begin=${begin}&end=${now}`);
+    const r = await fetch(`https://api.airplanes.live/v2/hex/${icao.toLowerCase()}`);
     if (!r.ok) return null;
-    const data = await r.json();
-    return Array.isArray(data) && data.length > 0 ? data[data.length - 1] : null;
+    const j = await r.json();
+    const a = (j.ac || [])[0];
+    if (!a) return null;
+    return {
+      estDepartureAirport: a.orig || null,
+      estArrivalAirport:   a.dest || null,
+    };
   } catch { return null; }
 }
 
@@ -452,50 +456,42 @@ async function enrichPopup(icao) {
   updatePopupField(`pp-dest-${icao}`,    entry.dest);
 }
 
-// ── OPENSKY FETCH ────────────────────────────────
-// Optional: set credentials for authenticated access (bypasses CORS on any origin)
-// Leave empty for anonymous access (works on GitHub Pages, blocked on localhost)
-const OPENSKY_USER = '';
-const OPENSKY_PASS = '';
-
-function openskyHeaders() {
-  if (!OPENSKY_USER || !OPENSKY_PASS) return {};
-  return { 'Authorization': 'Basic ' + btoa(`${OPENSKY_USER}:${OPENSKY_PASS}`) };
-}
-
-async function fetchBound(bound) {
-  const url = `https://opensky-network.org/api/states/all`
-    + `?lamin=${bound.lamin}&lomin=${bound.lomin}&lamax=${bound.lamax}&lomax=${bound.lomax}`;
-  const r = await fetch(url, { headers: openskyHeaders() });
+// ── AIRPLANES.LIVE FETCH ─────────────────────────
+// https://airplanes.live — CORS * — no auth required — free public API
+async function fetchRegion(region) {
+  const url = `https://api.airplanes.live/v2/point/${region.lat}/${region.lon}/${region.radius}`;
+  const r = await fetch(url);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const j = await r.json();
-  return j.states || [];
+  return j.ac || [];
 }
 
 async function fetchAllStates() {
-  const results   = await Promise.allSettled(BOUNDS.map(fetchBound));
+  const results   = await Promise.allSettled(REGIONS.map(fetchRegion));
   const fulfilled = results.filter(r => r.status === 'fulfilled');
-  if (fulfilled.length === 0) throw new Error('All bounds requests failed');
+  if (fulfilled.length === 0) throw new Error('All region requests failed');
   const all = [], seen = new Set();
   for (const res of fulfilled)
-    for (const s of res.value)
-      if (!seen.has(s[0])) { seen.add(s[0]); all.push(s); }
+    for (const a of res.value)
+      if (a.hex && !seen.has(a.hex)) { seen.add(a.hex); all.push(a); }
   return all;
 }
 
 // ── STATE NORMALISATION ──────────────────────────
-function remapState(s) {
+// airplanes.live returns named fields — map to our internal schema
+function remapState(a) {
+  const alt = a.alt_baro === 'ground' ? 0 : (typeof a.alt_baro === 'number' ? a.alt_baro * 0.3048 : null);
   return {
-    icao24:   s[0],
-    callsign: (s[1] || '').trim(),
-    country:  s[2],
-    lon:      s[5],
-    lat:      s[6],
-    alt:      s[7],
-    onGround: s[8],
-    speed:    s[9],
-    heading:  s[10],
-    squawk:   s[14],
+    icao24:   a.hex,
+    callsign: (a.flight || '').trim(),
+    country:  a.r || '-',          // registration (country not provided separately)
+    lon:      a.lon  ?? null,
+    lat:      a.lat  ?? null,
+    alt:      alt,                 // converted from feet → metres
+    onGround: a.alt_baro === 'ground',
+    speed:    typeof a.gs === 'number' ? a.gs * 0.514444 : null,  // kt → m/s
+    heading:  a.track ?? null,
+    squawk:   a.squawk || null,
   };
 }
 
