@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Squawk — Emergências Aéreas em Portugal</title>
+
+  <link rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin="anonymous" />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin="anonymous"></script>
+
+  <style>
+    :root {
+      --bg-primary:   #0d1117;
+      --bg-secondary: #161b22;
+      --bg-panel:     #1c2128;
+      --border:       #30363d;
+      --text-primary: #e6edf3;
+      --text-muted:   #8b949e;
+      --accent:       #f85149;
+      --accent-dim:   rgba(248,81,73,0.15);
+      --orange:       #f0883e;
+      --yellow:       #e3b341;
+      --green:        #3fb950;
+      --blue:         #58a6ff;
+      --shadow:       0 4px 24px rgba(0,0,0,0.6);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      height: 58px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 16px;
+      flex-shrink: 0;
+      z-index: 1000;
+    }
+    .header-icon { font-size: 24px; }
+    .header-title { font-size: 18px; font-weight: 700; letter-spacing: 0.5px; }
+    .header-title span { color: var(--accent); }
+    .header-sub { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: 20px; }
+
+    .status-badge { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); transition: background 0.3s; }
+    .status-dot.live    { background: var(--green);  box-shadow: 0 0 6px var(--green); }
+    .status-dot.error   { background: var(--accent); }
+    .status-dot.loading { background: var(--yellow); }
+
+    .counter-badge {
+      background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent);
+      padding: 3px 10px; border-radius: 20px; font-size: 13px; font-weight: 600; min-width: 32px; text-align: center;
+    }
+    .counter-badge.zero { background: rgba(48,54,61,0.4); border-color: var(--border); color: var(--text-muted); }
+
+    #map { flex: 1; position: relative; }
+
+    .legend-panel {
+      position: absolute; bottom: 30px; left: 16px; z-index: 500;
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; font-size: 12px; min-width: 170px; box-shadow: var(--shadow);
+    }
+    .legend-title { font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 10px; }
+    .legend-item  { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; color: var(--text-primary); }
+    .legend-dot   { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+
+    .side-panel {
+      position: absolute; top: 16px; right: 16px; z-index: 500;
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
+      width: 300px; max-height: calc(100% - 32px); display: flex; flex-direction: column;
+      box-shadow: var(--shadow); overflow: hidden;
+    }
+    .side-panel-header {
+      padding: 12px 14px; border-bottom: 1px solid var(--border);
+      font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+      color: var(--text-muted); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+    }
+    .side-panel-body { overflow-y: auto; flex: 1; }
+    .side-panel-body::-webkit-scrollbar { width: 4px; }
+    .side-panel-body::-webkit-scrollbar-track { background: transparent; }
+    .side-panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .aircraft-card { padding: 12px 14px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.15s; }
+    .aircraft-card:hover { background: rgba(88,166,255,0.06); }
+    .aircraft-card:last-child { border-bottom: none; }
+    .aircraft-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+    .aircraft-callsign { font-weight: 700; font-size: 14px; letter-spacing: 0.5px; }
+    .squawk-chip { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; letter-spacing: 1px; }
+    .sq-7700 { background: rgba(248,81,73,0.2);  color: var(--accent);  border: 1px solid var(--accent); }
+    .sq-7600 { background: rgba(240,136,62,0.2); color: var(--orange);  border: 1px solid var(--orange); }
+    .sq-7500 { background: rgba(227,179,65,0.2); color: var(--yellow);  border: 1px solid var(--yellow); }
+    .aircraft-card-meta { font-size: 11px; color: var(--text-muted); display: flex; gap: 10px; }
+
+    .empty-state { padding: 40px 20px; text-align: center; color: var(--text-muted); }
+    .empty-state .empty-icon { font-size: 36px; margin-bottom: 10px; }
+    .empty-state p { font-size: 13px; line-height: 1.6; }
+
+    .leaflet-popup-content-wrapper {
+      background: var(--bg-panel) !important; border: 1px solid var(--border) !important;
+      border-radius: 10px !important; box-shadow: var(--shadow) !important;
+      color: var(--text-primary) !important; padding: 0 !important;
+    }
+    .leaflet-popup-tip { background: var(--bg-panel) !important; }
+    .leaflet-popup-content { margin: 0 !important; min-width: 260px; }
+
+    .popup-inner    { padding: 14px 16px; }
+    .popup-header   { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .popup-callsign { font-size: 18px; font-weight: 800; letter-spacing: 1px; }
+    .popup-section  { margin-bottom: 10px; }
+    .popup-section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 5px; font-weight: 700; }
+    .popup-grid     { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+    .popup-field label { display: block; font-size: 10px; color: var(--text-muted); margin-bottom: 2px; }
+    .popup-field span  { font-size: 13px; font-weight: 500; }
+    .popup-field.full  { grid-column: 1 / -1; }
+
+    .popup-squawk-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; }
+    .popup-squawk-bar.sq-7700 { background: rgba(248,81,73,0.15);  border: 1px solid rgba(248,81,73,0.4); }
+    .popup-squawk-bar.sq-7600 { background: rgba(240,136,62,0.15); border: 1px solid rgba(240,136,62,0.4); }
+    .popup-squawk-bar.sq-7500 { background: rgba(227,179,65,0.15); border: 1px solid rgba(227,179,65,0.4); }
+    .popup-squawk-icon { font-size: 18px; }
+    .popup-squawk-text strong { display: block; font-size: 13px; }
+    .popup-squawk-text small  { font-size: 11px; color: var(--text-muted); }
+
+    .loader {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid var(--border); border-top-color: var(--blue);
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+      vertical-align: middle; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .controls { position: absolute; top: 16px; left: 16px; z-index: 500; display: flex; flex-direction: column; gap: 6px; }
+    .ctrl-btn {
+      width: 36px; height: 36px; background: var(--bg-panel); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text-primary); font-size: 16px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; transition: background 0.15s, border-color 0.15s;
+    }
+    .ctrl-btn:hover  { background: var(--bg-secondary); border-color: var(--blue); }
+    .ctrl-btn.active { background: var(--accent-dim);   border-color: var(--accent); }
+
+    .ticker {
+      position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 500;
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 20px;
+      padding: 5px 14px; font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;
+    }
+    .ticker-progress { width: 80px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+    .ticker-fill     { height: 100%; background: var(--blue); border-radius: 2px; transition: width 1s linear; }
+
+    .toast-container {
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 2000;
+      display: flex; flex-direction: column; gap: 6px; pointer-events: none;
+    }
+    .toast {
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 16px; font-size: 13px; box-shadow: var(--shadow);
+      animation: slideDown 0.3s ease, fadeOut 0.4s ease 3s forwards; pointer-events: auto;
+    }
+    .toast.alert { border-color: var(--accent); background: rgba(248,81,73,0.15); color: #ffa3a3; }
+    @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes fadeOut   { from { opacity: 1; } to { opacity: 0; pointer-events: none; } }
+
+    .region-label {
+      background: transparent !important; border: none !important; box-shadow: none !important;
+      color: #58a6ff !important; font-size: 11px !important; font-weight: 700 !important;
+      letter-spacing: 1px !important; text-transform: uppercase !important; opacity: 0.6; pointer-events: none;
+    }
+    .region-label::before { display: none !important; }
+
+    .aircraft-marker {
+      display: flex; align-items: center; justify-content: center;
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="header-icon">✈</span>
+  <div>
+    <div class="header-title"><span>Squawk</span> — Emergências Aéreas</div>
+    <div class="header-sub">Espaço aéreo português · Transponders 7700 / 7600 / 7500</div>
+  </div>
+  <div class="header-right">
+    <div class="status-badge">
+      <div class="status-dot loading" id="statusDot"></div>
+      <span id="statusText">A ligar…</span>
+    </div>
+    <div class="counter-badge zero" id="counterBadge">0 aviões</div>
+  </div>
+</header>
+
+<div id="map">
+
+  <div class="controls">
+    <button class="ctrl-btn" id="btnRefresh" title="Actualizar agora">⟳</button>
+    <button class="ctrl-btn" id="btnAll"     title="Ver todos os aviões">👁</button>
+    <button class="ctrl-btn" id="btnCenter"  title="Centrar em Portugal">🇵🇹</button>
+  </div>
+
+  <div class="side-panel">
+    <div class="side-panel-header">
+      <span>Aeronaves</span>
+      <span id="panelCount" style="color:var(--text-primary);font-size:13px;">0</span>
+    </div>
+    <div class="side-panel-body" id="panelList">
+      <div class="empty-state">
+        <div class="empty-icon">📡</div>
+        <p>Sem emergências detectadas.<br>A monitorizar…</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend-panel">
+    <div class="legend-title">Squawk</div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#f85149;box-shadow:0 0 6px #f85149;"></div>
+      <span>7700 — Emergência geral</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#f0883e;box-shadow:0 0 6px #f0883e;"></div>
+      <span>7600 — Falha de rádio</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#e3b341;box-shadow:0 0 6px #e3b341;"></div>
+      <span>7500 — Sequestro</span>
+    </div>
+  </div>
+
+  <div class="ticker">
+    <span>Próxima actualização</span>
+    <div class="ticker-progress"><div class="ticker-fill" id="tickerFill" style="width:100%"></div></div>
+    <span id="tickerSec">30s</span>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+
+</div>
+
+<script>
+// ── CONFIG ──────────────────────────────────────
+const REFRESH_INTERVAL    = 30_000;
+const FLIGHT_LOOKBACK_SEC = 2 * 60 * 60;
+const EMERGENCY_SQUAWKS   = ['7700', '7600', '7500'];
+const ICAO24_RE           = /^[0-9a-f]{6}$/i;
+
+const SQUAWK_META = {
+  '7700': { label: 'Emergência geral',      color: '#f85149', icon: '🆘', cls: 'sq-7700' },
+  '7600': { label: 'Falha de comunicações', color: '#f0883e', icon: '📻', cls: 'sq-7600' },
+  '7500': { label: 'Interferência ilícita', color: '#e3b341', icon: '⚠️', cls: 'sq-7500' },
+};
+
+const BOUNDS = [
+  { lamin: 36.8, lomin: -9.6,  lamax: 42.2, lomax: -6.0  },
+  { lamin: 36.5, lomin: -31.5, lamax: 40.0, lomax: -24.5 },
+  { lamin: 30.0, lomin: -17.5, lamax: 33.5, lomax: -15.5 },
+];
+
+const PT_OUTLINE  = [[42.15,-9.3],[41.85,-8.81],[41.5,-8.5],[40.0,-8.65],[38.7,-9.5],[37.0,-9.0],[36.98,-7.4],[37.2,-7.0],[38.0,-7.0],[39.5,-7.05],[41.8,-6.3],[42.15,-6.8],[42.15,-9.3]];
+const ACORES_BOX  = [[36.5,-31.5],[36.5,-24.5],[40.0,-24.5],[40.0,-31.5],[36.5,-31.5]];
+const MADEIRA_BOX = [[30.0,-17.5],[30.0,-15.5],[33.5,-15.5],[33.5,-17.5],[30.0,-17.5]];
+
+// ── MAP INIT ─────────────────────────────────────
+const map = L.map('map', { center: [38.5, -16.0], zoom: 5, zoomControl: false });
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap © CARTO', maxZoom: 18,
+}).addTo(map);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+const borderStyle = { color: '#58a6ff', weight: 1.5, opacity: 0.4, dashArray: '6 4', fill: false };
+L.polyline(PT_OUTLINE,  borderStyle).addTo(map);
+L.polyline(ACORES_BOX,  borderStyle).bindTooltip('Açores',  { permanent: true, direction: 'center', className: 'region-label' }).addTo(map);
+L.polyline(MADEIRA_BOX, borderStyle).bindTooltip('Madeira', { permanent: true, direction: 'center', className: 'region-label' }).addTo(map);
+
+// ── STATE ────────────────────────────────────────
+let markers          = {};
+let aircraftData     = {};
+let enrichCache      = {};
+let showAll          = false;
+let tickerInterval   = null;
+let tickerRemaining  = REFRESH_INTERVAL / 1000;
+let knownEmergencies = new Set();
+let refreshPromise   = null;
+
+// ── SECURITY HELPERS ─────────────────────────────
+function escapeHtml(s) {
+  if (s == null) return '-';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function isValidIcao24(s) {
+  return typeof s === 'string' && ICAO24_RE.test(s);
+}
+
+// ── MARKERS ──────────────────────────────────────
+function buildIcon(squawk, heading) {
+  const meta  = SQUAWK_META[squawk] || { color: '#58a6ff' };
+  const color = meta.color;
+  const rot   = heading != null ? heading : 0;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+    <g transform="rotate(${rot},16,16)">
+      <path d="M16 2 L20 14 L30 16 L20 18 L22 28 L16 25 L10 28 L12 18 L2 16 L12 14 Z"
+            fill="${color}" opacity="0.9" stroke="#0d1117" stroke-width="1.2"/>
+    </g>
+    <circle cx="16" cy="16" r="4" fill="${color}" opacity="0.3"/>
+  </svg>`;
+  return L.divIcon({ html: `<div class="aircraft-marker">${svg}</div>`, iconSize: [32,32], iconAnchor: [16,16], popupAnchor: [0,-18], className: '' });
+}
+
+function buildAllIcon(heading) {
+  const rot = heading != null ? heading : 0;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 32 32">
+    <g transform="rotate(${rot},16,16)">
+      <path d="M16 2 L20 14 L30 16 L20 18 L22 28 L16 25 L10 28 L12 18 L2 16 L12 14 Z"
+            fill="#58a6ff" opacity="0.5" stroke="#0d1117" stroke-width="1"/>
+    </g>
+  </svg>`;
+  return L.divIcon({ html: `<div class="aircraft-marker">${svg}</div>`, iconSize: [22,22], iconAnchor: [11,11], popupAnchor: [0,-13], className: '' });
+}
+
+// ── POPUP ────────────────────────────────────────
+function squawkBar(sq) {
+  const m    = SQUAWK_META[sq] || {};
+  const desc = sq === '7700' ? 'Aeronave em emergência declarada'
+             : sq === '7600' ? 'Perda de comunicações rádio'
+             :                 'Interferência não autorizada a bordo';
+  return `<div class="popup-squawk-bar ${escapeHtml(m.cls || '')}">
+    <span class="popup-squawk-icon">${m.icon || '✈'}</span>
+    <div class="popup-squawk-text">
+      <strong>${escapeHtml(sq)} — ${escapeHtml(m.label || 'Código especial')}</strong>
+      <small>${escapeHtml(desc)}</small>
+    </div>
+  </div>`;
+}
+
+function fmtAlt(m)   { return m == null ? '-' : `${Math.round(m)} m / ${Math.round(m * 3.28084)} ft`; }
+function fmtSpeed(v) { return v == null ? '-' : `${Math.round(v * 1.94384)} kt`; }
+function fmtHeading(h) {
+  if (h == null) return '-';
+  return `${Math.round(h)}° ${['N','NE','E','SE','S','SW','W','NW'][Math.round(h / 45) % 8]}`;
+}
+
+function buildPopupBase(a) {
+  const sq      = escapeHtml(a.squawk || '----');
+  const call    = escapeHtml(a.callsign || '-');
+  const country = escapeHtml(a.country  || '-');
+  const icao    = escapeHtml(a.icao24);
+  const sqCls   = escapeHtml(SQUAWK_META[a.squawk]?.cls || '');
+  return `<div class="popup-inner">
+    <div class="popup-header">
+      <div class="popup-callsign">${call}</div>
+      <span class="squawk-chip ${sqCls}">${sq}</span>
+    </div>
+    ${squawkBar(a.squawk || '----')}
+    <div class="popup-section">
+      <div class="popup-section-title">Aeronave</div>
+      <div class="popup-grid">
+        <div class="popup-field"><label>ICAO24</label><span>${icao.toUpperCase()}</span></div>
+        <div class="popup-field"><label>País de registo</label><span>${country}</span></div>
+        <div class="popup-field" id="pp-model-${icao}"><label>Modelo</label><span><span class="loader"></span></span></div>
+        <div class="popup-field" id="pp-airline-${icao}"><label>Companhia</label><span><span class="loader"></span></span></div>
+      </div>
+    </div>
+    <div class="popup-section">
+      <div class="popup-section-title">Voo</div>
+      <div class="popup-grid">
+        <div class="popup-field" id="pp-origin-${icao}"><label>Origem</label><span><span class="loader"></span></span></div>
+        <div class="popup-field" id="pp-dest-${icao}"><label>Destino</label><span><span class="loader"></span></span></div>
+      </div>
+    </div>
+    <div class="popup-section">
+      <div class="popup-section-title">Posição</div>
+      <div class="popup-grid">
+        <div class="popup-field"><label>Altitude</label><span>${a.onGround ? 'Em solo' : fmtAlt(a.alt)}</span></div>
+        <div class="popup-field"><label>Velocidade</label><span>${fmtSpeed(a.speed)}</span></div>
+        <div class="popup-field"><label>Rumo</label><span>${fmtHeading(a.heading)}</span></div>
+        <div class="popup-field"><label>Estado</label><span>${a.onGround ? 'Solo' : 'Voo'}</span></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── ENRICHMENT ───────────────────────────────────
+async function enrichFromHexdb(icao) {
+  try {
+    const r = await fetch(`https://hexdb.io/api/v1/aircraft/${icao.toLowerCase()}`);
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+
+async function enrichFlights(icao) {
+  try {
+    const now   = Math.floor(Date.now() / 1000);
+    const begin = now - FLIGHT_LOOKBACK_SEC;
+    const r = await fetch(`https://opensky-network.org/api/flights/aircraft?icao24=${icao.toLowerCase()}&begin=${begin}&end=${now}`);
+    if (!r.ok) return null;
+    const data = await r.json();
+    return Array.isArray(data) && data.length > 0 ? data[data.length - 1] : null;
+  } catch { return null; }
+}
+
+function updatePopupField(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const span = el.querySelector('span');
+  if (span) span.textContent = value || '-';
+}
+
+async function enrichPopup(icao) {
+  if (enrichCache[icao]) {
+    const c = enrichCache[icao];
+    updatePopupField(`pp-model-${icao}`,   c.model);
+    updatePopupField(`pp-airline-${icao}`, c.airline);
+    updatePopupField(`pp-origin-${icao}`,  c.orig);
+    updatePopupField(`pp-dest-${icao}`,    c.dest);
+    return;
+  }
+  const [hex, flight] = await Promise.all([enrichFromHexdb(icao), enrichFlights(icao)]);
+  const entry = {
+    model:   hex    ? ([hex.Manufacturer, hex.Type].filter(Boolean).join(' ') || null) : null,
+    airline: hex    ? (hex.RegisteredOwners || hex.OperatorICAO || null)               : null,
+    orig:    flight ? (flight.estDepartureAirport || null) : null,
+    dest:    flight ? (flight.estArrivalAirport   || null) : null,
+  };
+  enrichCache[icao] = entry;
+  updatePopupField(`pp-model-${icao}`,   entry.model);
+  updatePopupField(`pp-airline-${icao}`, entry.airline);
+  updatePopupField(`pp-origin-${icao}`,  entry.orig);
+  updatePopupField(`pp-dest-${icao}`,    entry.dest);
+}
+
+// ── OPENSKY FETCH ────────────────────────────────
+// Optional: set credentials for authenticated access (bypasses CORS on any origin)
+// Leave empty for anonymous access (works on GitHub Pages, blocked on localhost)
+const OPENSKY_USER = '';
+const OPENSKY_PASS = '';
+
+function openskyHeaders() {
+  if (!OPENSKY_USER || !OPENSKY_PASS) return {};
+  return { 'Authorization': 'Basic ' + btoa(`${OPENSKY_USER}:${OPENSKY_PASS}`) };
+}
+
+async function fetchBound(bound) {
+  const url = `https://opensky-network.org/api/states/all`
+    + `?lamin=${bound.lamin}&lomin=${bound.lomin}&lamax=${bound.lamax}&lomax=${bound.lomax}`;
+  const r = await fetch(url, { headers: openskyHeaders() });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const j = await r.json();
+  return j.states || [];
+}
+
+async function fetchAllStates() {
+  const results   = await Promise.allSettled(BOUNDS.map(fetchBound));
+  const fulfilled = results.filter(r => r.status === 'fulfilled');
+  if (fulfilled.length === 0) throw new Error('All bounds requests failed');
+  const all = [], seen = new Set();
+  for (const res of fulfilled)
+    for (const s of res.value)
+      if (!seen.has(s[0])) { seen.add(s[0]); all.push(s); }
+  return all;
+}
+
+// ── STATE NORMALISATION ──────────────────────────
+function remapState(s) {
+  return {
+    icao24:   s[0],
+    callsign: (s[1] || '').trim(),
+    country:  s[2],
+    lon:      s[5],
+    lat:      s[6],
+    alt:      s[7],
+    onGround: s[8],
+    speed:    s[9],
+    heading:  s[10],
+    squawk:   s[14],
+  };
+}
+
+// ── UI HELPERS ───────────────────────────────────
+function setStatus(state) {
+  document.getElementById('statusDot').className = 'status-dot ' + state;
+  document.getElementById('statusText').textContent =
+    state === 'live' ? 'Em directo' : state === 'loading' ? 'A actualizar…' : 'Erro de ligação';
+}
+
+function setCounter(n) {
+  const el = document.getElementById('counterBadge');
+  el.textContent = n === 1 ? '1 avião' : `${n} aviões`;
+  el.className = 'counter-badge' + (n === 0 ? ' zero' : '');
+}
+
+function showToast(msg, type = '') {
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), 3800);
+}
+
+// ── PANEL ────────────────────────────────────────
+function renderPanel(aircraft) {
+  const list    = document.getElementById('panelList');
+  const countEl = document.getElementById('panelCount');
+  countEl.textContent = aircraft.length;
+
+  if (aircraft.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="empty-icon">🟢</div><p>Sem emergências detectadas.<br>Espaço aéreo limpo.</p></div>`;
+    return;
+  }
+
+  list.innerHTML = aircraft.map(a => {
+    const call  = escapeHtml(a.callsign || a.icao24.toUpperCase());
+    const sq    = escapeHtml(a.squawk || '----');
+    const icao  = escapeHtml(a.icao24);
+    const cls   = escapeHtml(SQUAWK_META[a.squawk]?.cls || '');
+    return `<div class="aircraft-card" data-icao="${icao}">
+      <div class="aircraft-card-top">
+        <span class="aircraft-callsign">${call}</span>
+        <span class="squawk-chip ${cls}">${sq}</span>
+      </div>
+      <div class="aircraft-card-meta">
+        <span>${fmtAlt(a.alt)}</span>
+        <span>${fmtSpeed(a.speed)}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Delegated click — no inline onclick with API data
+document.getElementById('panelList').addEventListener('click', e => {
+  const card = e.target.closest('.aircraft-card');
+  if (card) focusAircraft(card.dataset.icao);
+});
+
+function focusAircraft(icao) {
+  const a = aircraftData[icao];
+  if (!a || a.lat == null || a.lon == null) return;
+  map.setView([a.lat, a.lon], 9, { animate: true });
+  const m = markers[icao];
+  if (m) m.openPopup();
+}
+
+// ── REFRESH ──────────────────────────────────────
+async function _doRefresh() {
+  setStatus('loading');
+  try {
+    const states = await fetchAllStates();
+    const emergency = [], allMapped = [];
+
+    for (const s of states) {
+      const a = remapState(s);
+      if (!isValidIcao24(a.icao24) || a.lat == null || a.lon == null) continue;
+      allMapped.push(a);
+
+      if (EMERGENCY_SQUAWKS.includes(a.squawk)) {
+        emergency.push(a);
+        if (!knownEmergencies.has(a.icao24)) {
+          knownEmergencies.add(a.icao24);
+          const meta = SQUAWK_META[a.squawk];
+          showToast(`🚨 ${a.callsign || a.icao24.toUpperCase()} — ${a.squawk} ${meta?.label || ''}`, 'alert');
+        }
+      } else {
+        knownEmergencies.delete(a.icao24);
+      }
+    }
+
+    // Remove stale emergency markers
+    const currentEmergencyIds = new Set(emergency.map(a => a.icao24));
+    for (const [icao, m] of Object.entries(markers)) {
+      if (m._isEmergency && !currentEmergencyIds.has(icao)) {
+        map.removeLayer(m); delete markers[icao];
+      }
+    }
+
+    // Remove all-mode markers when not in showAll
+    if (!showAll) {
+      for (const [icao, m] of Object.entries(markers)) {
+        if (!m._isEmergency) { map.removeLayer(m); delete markers[icao]; }
+      }
+    }
+
+    const displayList = showAll ? allMapped : emergency;
+
+    for (const a of displayList) {
+      aircraftData[a.icao24] = a;
+      const isEmerg = EMERGENCY_SQUAWKS.includes(a.squawk);
+      const icon    = isEmerg ? buildIcon(a.squawk, a.heading) : buildAllIcon(a.heading);
+
+      if (markers[a.icao24]) {
+        markers[a.icao24].setLatLng([a.lat, a.lon]);
+        markers[a.icao24].setIcon(icon);
+      } else {
+        const icao = a.icao24;
+        const m = L.marker([a.lat, a.lon], { icon });
+        m.bindPopup(() => buildPopupBase(aircraftData[icao]), { maxWidth: 320, className: '' });
+        m.on('popupopen', () => enrichPopup(icao));
+        m._isEmergency = isEmerg;
+        m.addTo(map);
+        markers[icao] = m;
+      }
+    }
+
+    // Remove stale all-mode markers
+    if (showAll) {
+      const allIds = new Set(allMapped.map(a => a.icao24));
+      for (const [icao, m] of Object.entries(markers)) {
+        if (!m._isEmergency && !allIds.has(icao)) { map.removeLayer(m); delete markers[icao]; }
+      }
+    }
+
+    renderPanel(emergency);
+    setCounter(emergency.length);
+    setStatus('live');
+  } catch (err) {
+    setStatus('error');
+    console.error('OpenSky fetch error:', err);
+    showToast('Erro ao contactar OpenSky API', '');
+  }
+}
+
+function refresh() {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = _doRefresh().finally(() => { refreshPromise = null; });
+  return refreshPromise;
+}
+
+// ── TICKER ───────────────────────────────────────
+function startTicker() {
+  tickerRemaining = REFRESH_INTERVAL / 1000;
+  clearInterval(tickerInterval);
+  tickerInterval = setInterval(() => {
+    tickerRemaining--;
+    document.getElementById('tickerFill').style.width = (tickerRemaining / (REFRESH_INTERVAL / 1000) * 100) + '%';
+    document.getElementById('tickerSec').textContent  = tickerRemaining + 's';
+    if (tickerRemaining <= 0) {
+      clearInterval(tickerInterval);
+      refresh().then(() => startTicker());
+    }
+  }, 1000);
+}
+
+// ── CONTROLS ─────────────────────────────────────
+document.getElementById('btnRefresh').addEventListener('click', () => {
+  clearInterval(tickerInterval);
+  refresh().then(() => startTicker());
+});
+
+document.getElementById('btnCenter').addEventListener('click', () => {
+  map.setView([38.5, -16.0], 5, { animate: true });
+});
+
+document.getElementById('btnAll').addEventListener('click', function() {
+  showAll = !showAll;
+  this.classList.toggle('active', showAll);
+  this.title = showAll ? 'Mostrar só emergências' : 'Ver todos os aviões';
+  clearInterval(tickerInterval);
+  refresh().then(() => startTicker());
+});
+
+// ── BOOT ─────────────────────────────────────────
+refresh().then(() => startTicker());
+</script>
+</body>
+</html>
