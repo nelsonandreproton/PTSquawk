@@ -19,6 +19,14 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+# Heartbeat integration — optional: silently skipped if module not available
+# (e.g. during local development without the HetznerCheck volume mounted).
+try:
+    from heartbeat import beat as _hb_beat  # mounted at /hetznercheck via PYTHONPATH
+    _HEARTBEAT_AVAILABLE = True
+except ImportError:
+    _HEARTBEAT_AVAILABLE = False
+
 # ── Config ────────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID   = os.environ["TELEGRAM_CHAT_ID"]
@@ -297,6 +305,14 @@ def poll_loop() -> None:
 
             # Clear resolved emergencies so re-entry fires again
             known_emergencies &= current_emergency_keys
+
+            if _HEARTBEAT_AVAILABLE:
+                _hb_beat(
+                    "PTSquawk",
+                    status="ok",
+                    note=f"scanned {len(aircraft)} aircraft",
+                    next_in_seconds=180,  # poll every 60s, alert after 3 missed cycles
+                )
 
         except Exception as exc:
             log.error("Poll loop error: %s", exc)
